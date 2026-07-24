@@ -8,6 +8,9 @@ cartridges are in scope. The current alpha executes P8 Lua through z8lua,
 decodes text and PNG carts, renders a 128×128 indexed framebuffer and packages
 a native RV32 openFPGA core for Pocket.
 
+Read [a personal note from the creator](ABOUT_ME.md) about how Pico8Pocket
+started and how you can help improve it.
+
 ## Current state
 
 - Host tests cover `.p8`, current and legacy compressed `.p8.png`, ZIP
