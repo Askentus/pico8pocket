@@ -1,0 +1,41 @@
+{
+    "instance": {
+        "magic": "APF_VER_1",
+        "variant_select": {
+            "id": 666,
+            "select": false
+        },
+        "core_select": {
+            "id": 0,
+            "select": false
+        },
+        "data_slots": [
+            {
+                "id": 1,
+                "filename": "os.bin"
+            },
+            {
+                "id": 2,
+                "filename": "pico8pocket.ini"
+            },
+            {
+                "id": 3,
+                "filename": "pico8pocket.elf"
+            },
+            { "id": 5, "filename": "p8p_pad5.bin" },
+            { "id": 6, "filename": "p8p_pad6.bin" },
+            { "id": 7, "filename": "p8p_pad7.ofsf" },
+            { "id": 8, "filename": "pico8pocket.cfg" },
+            { "id": 10, "filename": "pico8pocket_0.sav" },
+            { "id": 11, "filename": "pico8pocket_1.sav" },
+            { "id": 12, "filename": "pico8pocket_2.sav" },
+            { "id": 13, "filename": "pico8pocket_3.sav" },
+            { "id": 14, "filename": "pico8pocket_4.sav" },
+            { "id": 15, "filename": "pico8pocket_5.sav" },
+            { "id": 16, "filename": "pico8pocket_6.sav" },
+            { "id": 17, "filename": "pico8pocket_7.sav" },
+            { "id": 18, "filename": "pico8pocket_8.sav" },
+            { "id": 19, "filename": "pico8pocket_9.sav" }
+        ]
+    }
+}

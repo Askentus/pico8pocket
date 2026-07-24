@@ -1,0 +1,29 @@
+{
+    "core": {
+        "magic": "APF_VER_1",
+        "metadata": {
+            "platform_ids": ["pico8pocket"],
+            "shortname": "pico8pocket",
+            "description": "PICO-8 player on openfpgaOS",
+            "author": "Askent",
+            "url": "",
+            "version": "0.0.27",
+            "date_release": "2026-07-23"
+        },
+        "framework": {
+            "target_product": "Analogue Pocket",
+            "version_required": "2.2",
+            "sleep_supported": false,
+            "dock": { "supported": true, "analog_output": false },
+            "hardware": { "link_port": false, "cartridge_adapter": 0 }
+        },
+        "cores": [
+            {
+                "name": "default",
+                "id": 0,
+                "filename": "os20.rbf_r",
+                "chip32_vm": "loader.bin"
+            }
+        ]
+    }
+}

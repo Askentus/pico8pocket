@@ -1,0 +1,10 @@
+#pragma once
+#include <math.h>
+
+namespace std {
+inline long long abs(long long value) { return value < 0 ? -value : value; }
+inline long abs(long value) { return value < 0 ? -value : value; }
+inline int abs(int value) { return value < 0 ? -value : value; }
+using ::pow;
+using ::ldexp;
+}

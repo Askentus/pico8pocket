@@ -1,0 +1,11 @@
+#pragma once
+#include <ctype.h>
+
+namespace std {
+using ::isalnum;
+using ::isalpha;
+using ::isdigit;
+using ::isspace;
+using ::tolower;
+using ::toupper;
+}

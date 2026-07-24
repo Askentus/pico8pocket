@@ -1,0 +1,97 @@
+{
+    "data": {
+        "magic": "APF_VER_1",
+        "data_slots": [
+            {
+                "id": 0,
+                "name": "Game",
+                "required": true,
+                "filename": "pico8pocket.json",
+                "parameters": 275,
+                "extensions": ["json"]
+            },
+            {
+                "id": 1,
+                "name": "OS Binary",
+                "required": true,
+                "parameters": 0,
+                "filename": "os.bin",
+                "extensions": ["bin"],
+                "deferload": true
+            },
+            {
+                "id": 2,
+                "name": "OS Config",
+                "required": true,
+                "parameters": 0,
+                "filename": "pico8pocket.ini",
+                "extensions": ["ini"],
+                "deferload": true
+            },
+            {
+                "id": 3,
+                "name": "Application",
+                "required": true,
+                "parameters": 0,
+                "filename": "pico8pocket.elf",
+                "extensions": ["elf"],
+                "deferload": true
+            },
+            {
+                "id": 4,
+                "name": "Cartridge",
+                "required": true,
+                "parameters": 129,
+                "extensions": ["p8", "png", "zip"],
+                "deferload": true
+            },
+            {
+                "id": 5,
+                "name": "Compatibility Pad 5",
+                "required": true,
+                "parameters": 0,
+                "filename": "p8p_pad5.bin",
+                "extensions": ["bin"],
+                "deferload": true
+            },
+            {
+                "id": 6,
+                "name": "Compatibility Pad 6",
+                "required": true,
+                "parameters": 0,
+                "filename": "p8p_pad6.bin",
+                "extensions": ["bin"],
+                "deferload": true
+            },
+            {
+                "id": 7,
+                "name": "Compatibility Pad 7",
+                "required": true,
+                "parameters": 0,
+                "filename": "p8p_pad7.ofsf",
+                "extensions": ["ofsf"],
+                "deferload": true
+            },
+            {
+                "id": 8,
+                "name": "Settings",
+                "required": false,
+                "parameters": "0x84",
+                "nonvolatile": true,
+                "address": "0x20380000",
+                "size_maximum": "0x40000",
+                "extensions": ["cfg"]
+            },
+            { "id": 10, "name": "Save 0", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x20100000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 11, "name": "Save 1", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x20140000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 12, "name": "Save 2", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x20180000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 13, "name": "Save 3", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x201C0000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 14, "name": "Save 4", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x20200000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 15, "name": "Save 5", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x20240000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 16, "name": "Save 6", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x20280000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 17, "name": "Save 7", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x202C0000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 18, "name": "Save 8", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x20300000", "size_maximum": "0x40000", "extensions": ["sav"] },
+            { "id": 19, "name": "Save 9", "required": false, "parameters": "0x84", "nonvolatile": true, "address": "0x20340000", "size_maximum": "0x40000", "extensions": ["sav"] }
+        ]
+    }
+}

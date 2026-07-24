@@ -1,0 +1,101 @@
+diff --git a/lparser.h b/lparser.h
+--- a/lparser.h
++++ b/lparser.h
+@@ -44,6 +44,7 @@ typedef struct expdesc {
+       short idx;  /* index (R/K) */
+       lu_byte t;  /* table (register or upvalue) */
+       lu_byte vt;  /* whether 't' is register (VLOCAL) or upvalue (VUPVAL) */
++      lu_byte env;  /* whether this index was generated for a global name */
+     } ind;
+     int info;  /* for generic use */
+     lua_Number nval;  /* for VKNUM */
+diff --git a/lcode.c b/lcode.c
+--- a/lcode.c
++++ b/lcode.c
+@@ -393,12 +393,15 @@ void luaK_dischargevars (FuncState *fs, expdesc *e) {
+     }
+     case VINDEXED: {
+       OpCode op = OP_GETTABUP;  /* assume 't' is in an upvalue */
++      int table = e->u.ind.t;
+       freereg(fs, e->u.ind.idx);
+       if (e->u.ind.vt == VLOCAL) {  /* 't' is in a register? */
+         freereg(fs, e->u.ind.t);
+         op = OP_GETTABLE;
+       }
+-      e->u.info = luaK_codeABC(fs, op, 0, e->u.ind.t, e->u.ind.idx);
++      if (e->u.ind.env)
++        table |= 1 << 8;
++      e->u.info = luaK_codeABC(fs, op, 0, table, e->u.ind.idx);
+       e->k = VRELOCABLE;
+       break;
+     }
+@@ -706,6 +709,7 @@ void luaK_indexed (FuncState *fs, expdesc *t, expdesc *k) {
+   t->u.ind.idx = luaK_exp2RK(fs, k);
+   t->u.ind.vt = (t->k == VUPVAL) ? VUPVAL
+                                  : check_exp(vkisinreg(t->k), VLOCAL);
++  t->u.ind.env = 0;
+   t->k = VINDEXED;
+ }
+ 
+diff --git a/lparser.c b/lparser.c
+--- a/lparser.c
++++ b/lparser.c
+@@ -304,6 +304,7 @@ static void singlevar (LexState *ls, expdesc *var) {
+     lua_assert(var->k == VLOCAL || var->k == VUPVAL);
+     codestring(ls, &key, varname);  /* key is variable name */
+     luaK_indexed(fs, var, &key);  /* env[varname] */
++    var->u.ind.env = 1;
+   }
+ }
+ 
+diff --git a/lvm.c b/lvm.c
+--- a/lvm.c
++++ b/lvm.c
+@@ -628,7 +628,8 @@ void luaV_execute (lua_State *L) {
+         setobj2s(L, ra, cl->upvals[b]->v);
+       )
+       vmcase(OP_GETTABUP,
+-        int b = GETARG_B(i);
++        int encoded = GETARG_B(i);
++        int b = encoded & 0xff;
+         Protect(luaV_gettable(L, cl->upvals[b]->v, RKC(i), ra));
+         // ATTN: I don't think this is actually what PICO-8 does, but I'm not sure
+         // what PICO-8 is actually doing, and this appears to make carts compatible.
+@@ -638,7 +639,7 @@ void luaV_execute (lua_State *L) {
+         // an allowlist or something. Again, not really sure, don't really love this 
+         // solution, but I guess it works for now.
+         // Note that this was observed in Jan 2026, PICO-8 version 0.2.7, Ex-Terra dated 2024-09-23 fucntion called draw_gbullets_old
+-        if (ttisnil(ra) && ttisstring(RKC(i))) {
++        if ((encoded & (1 << 8)) && ttisnil(ra) && ttisstring(RKC(i))) {
+           Table *reg = hvalue(&G(L)->l_registry);
+           TString *sandboxKey = luaS_newliteral(L, "__PICO8_SANDBOX");
+           const TValue *sandbox = luaH_getstr(reg, sandboxKey);
+@@ -651,10 +652,13 @@ void luaV_execute (lua_State *L) {
+         }
+       )
+       vmcase(OP_GETTABLE,
+-        Protect(luaV_gettable(L, RB(i), RKC(i), ra));
++        int encoded = GETARG_B(i);
++        TValue *table = base + (encoded & 0xff);
++        Protect(luaV_gettable(L, table, RKC(i), ra));
+         // When _ENV is overridden (e.g., in a for loop), lookups use OP_GETTABLE instead of OP_GETTABUP
+         // We need to check the sandbox fallback here as well
+-        if (ttisnil(ra) && ttisstring(RKC(i)) && ttistable(RB(i))) {
++        if ((encoded & (1 << 8)) && ttisnil(ra) &&
++            ttisstring(RKC(i)) && ttistable(table)) {
+           Table *reg = hvalue(&G(L)->l_registry);
+           TString *sandboxKey = luaS_newliteral(L, "__PICO8_SANDBOX");
+           const TValue *sandbox = luaH_getstr(reg, sandboxKey);
+diff --git a/ldebug.c b/ldebug.c
+--- a/ldebug.c
++++ b/ldebug.c
+@@ -426,7 +426,8 @@ static const char *getobjname (Proto *p, int lastpc, int reg,
+       case OP_GETTABUP:
+       case OP_GETTABLE: {
+         int k = GETARG_C(i);  /* key index */
+-        int t = GETARG_B(i);  /* table index */
++        /* The high B bit marks a sandbox-fallback _ENV lookup. */
++        int t = GETARG_B(i) & 0xff;  /* table/upvalue index */
+         const char *vn = (op == OP_GETTABLE)  /* name of indexed variable */
+                          ? luaF_getlocalname(p, t + 1, pc)
+                          : upvalname(p, t);

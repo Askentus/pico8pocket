@@ -1,0 +1,16 @@
+.deps/
+.obj/
+build/
+releases/
+app_pc
+*.o
+*.elf
+*.zip
+.DS_Store
+
+# Locally supplied cartridges are never part of the public source tree.
+/Доп игры/
+/Топ игры/
+/assets/cards/*.p8
+/assets/cards/*.p8.png
+/assets/cards/*.zip
