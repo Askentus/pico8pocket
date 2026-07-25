@@ -19,6 +19,7 @@ SRCS := \
 	$(PROJECT_ROOT)/src/app/settings.c \
 	$(PROJECT_ROOT)/src/app/menu.c \
 	$(PROJECT_ROOT)/src/app/system_input.c \
+	$(PROJECT_ROOT)/src/app/scheduler.c \
 	$(PROJECT_ROOT)/src/runtime/cart.c \
 	$(PROJECT_ROOT)/src/runtime/cart_png.c \
 	$(PROJECT_ROOT)/src/runtime/audio.c \

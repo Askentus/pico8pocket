@@ -7,8 +7,8 @@
             "description": "PICO-8 player on openfpgaOS",
             "author": "Askent",
             "url": "",
-            "version": "0.0.27",
-            "date_release": "2026-07-23"
+            "version": "0.0.31",
+            "date_release": "2026-07-25"
         },
         "framework": {
             "target_product": "Analogue Pocket",

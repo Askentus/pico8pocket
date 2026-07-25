@@ -56,7 +56,8 @@ int p8p_settings_load(p8p_settings_t *settings) {
     settings->language = settings->language != 0;
     settings->muted = settings->muted != 0;
     if (settings->volume > 100) settings->volume = 100;
-    if (settings->scale > 3) settings->scale = 2;
+    /* Scale 3 was the retired FULL SOFT mode. */
+    if (settings->scale > 2) settings->scale = 2;
     return 0;
 }
 

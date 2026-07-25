@@ -2,6 +2,7 @@
 #include "p8p/menu.h"
 #include "p8p/platform.h"
 #include "p8p/runtime.h"
+#include "p8p/scheduler.h"
 #include "p8p/settings.h"
 #include "p8p/state_store.h"
 #include "p8p/system_input.h"
@@ -36,34 +37,52 @@ static void fill_rect(uint8_t *fb, int x, int y, int width, int height,
     }
 }
 
-static void draw_number(uint8_t *fb, int y, uint8_t color, unsigned value) {
-    static const uint16_t digits[10] = {
-        0x7b6f, 0x2c97, 0x62a7, 0x628e, 0x5bc9,
-        0x798e, 0x39aa, 0x7292, 0x2aaa, 0x2ace
-    };
-    int values[2];
+static uint16_t error_glyph(unsigned char character);
 
-    if (value > 99) value = 99;
-    values[0] = (int)(value / 10);
-    values[1] = (int)(value % 10);
-    fill_rect(fb, 0, y, 13, 7, 0);
-    fill_rect(fb, 1, y + 1, 1, 5, color);
-    for (int digit = 0; digit < 2; ++digit) {
-        uint16_t bits = digits[values[digit]];
+static void draw_metric(uint8_t *fb, int x, int y, char label, uint8_t color,
+                        unsigned value, int digits) {
+    unsigned limit = digits == 3 ? 999u : 99u;
+    unsigned divisor = digits == 3 ? 100u : 10u;
+
+    if (value > limit) value = limit;
+    fill_rect(fb, x, y, 5 + digits * 4, 7, 0);
+    for (int glyph_index = 0; glyph_index <= digits; ++glyph_index) {
+        unsigned char character = glyph_index == 0 ? (unsigned char)label :
+            (unsigned char)('0' + (value / divisor) % 10u);
+        uint16_t bits = error_glyph(character);
         for (int row = 0; row < 5; ++row)
             for (int column = 0; column < 3; ++column)
                 if (bits & (1u << (14 - row * 3 - column)))
                     fb[(y + row + 1) * P8P_SCREEN_WIDTH +
-                       4 + digit * 4 + column] = color;
+                       x + 1 + glyph_index * 4 + column] = color;
+        if (glyph_index > 0 && divisor > 1)
+            divisor /= 10u;
     }
 }
 
-static void draw_profile(uint8_t *fb, unsigned fps, unsigned runtime_us,
-                         unsigned audio_us, unsigned present_us) {
-    draw_number(fb, 0, 7, fps);
-    draw_number(fb, 7, 11, (runtime_us + 500) / 1000);
-    draw_number(fb, 14, 9, (audio_us + 500) / 1000);
-    draw_number(fb, 21, 12, (present_us + 500) / 1000);
+static void draw_profile(uint8_t *fb, unsigned logical_fps,
+                         unsigned visible_fps, unsigned update_us,
+                         unsigned draw_us, unsigned audio_us,
+                         unsigned present_us, unsigned render_divisor,
+                         unsigned lua_instructions,
+                         const p8p_runtime_api_profile_t *apis) {
+    draw_metric(fb, 0, 0,  'L', 7,  logical_fps, 2);
+    draw_metric(fb, 0, 7,  'V', 6,  visible_fps, 2);
+    draw_metric(fb, 0, 14, 'U', 11, (update_us + 500) / 1000, 2);
+    draw_metric(fb, 0, 21, 'D', 8,  (draw_us + 500) / 1000, 2);
+    draw_metric(fb, 0, 28, 'A', 9,  (audio_us + 500) / 1000, 2);
+    draw_metric(fb, 0, 35, 'P', 12, (present_us + 500) / 1000, 2);
+    draw_metric(fb, 0, 42, 'R', 14, render_divisor, 2);
+    draw_metric(fb, 0, 49, 'K', 10, (lua_instructions + 500) / 1000, 3);
+    if (apis) {
+        draw_metric(fb, 18, 0,  'S', 12, apis->calls[P8P_API_SPRITE], 3);
+        draw_metric(fb, 18, 7,  'G', 8,  apis->calls[P8P_API_GRAPHICS], 3);
+        draw_metric(fb, 18, 14, 'M', 9,  apis->calls[P8P_API_MEMORY], 3);
+        draw_metric(fb, 18, 21, 'C', 14, apis->calls[P8P_API_DRAW_STATE], 3);
+        draw_metric(fb, 18, 28, 'T', 7,  apis->calls[P8P_API_TEXT], 3);
+        draw_metric(fb, 18, 35, 'B', 11, apis->calls[P8P_API_INPUT], 3);
+        draw_metric(fb, 18, 42, 'Q', 10, apis->calls[P8P_API_HELPER], 3);
+    }
 }
 
 static uint16_t error_glyph(unsigned char character) {
@@ -168,23 +187,49 @@ static uint32_t smooth_time(uint32_t average, uint32_t sample) {
     return average ? (average * 7u + sample) / 8u : sample;
 }
 
-static int adaptive_render_divisor(uint32_t full_frame_us,
-                                   uint32_t update_only_us,
-                                   uint32_t audio_us,
-                                   uint32_t present_us) {
-    const uint32_t budget_us = 15000u;
-    uint32_t update_us = update_only_us ? update_only_us : full_frame_us / 4u;
-    uint32_t draw_us = full_frame_us > update_us ?
-                       full_frame_us - update_us : 0;
+typedef struct runtime_profile {
+    uint32_t update_start_us;
+    uint32_t draw_start_us;
+    uint32_t average_update_us;
+    uint32_t average_draw_us;
+} runtime_profile_t;
 
-    for (int divisor = 1; divisor <= 4; ++divisor) {
-        uint32_t estimated_us = update_us + audio_us +
-            (draw_us + (uint32_t)divisor - 1u) / (uint32_t)divisor +
-            (present_us + (uint32_t)divisor - 1u) / (uint32_t)divisor;
-        if (estimated_us <= budget_us)
-            return divisor;
+static void runtime_profile_event(void *userdata,
+                                  p8p_runtime_profile_event_t event) {
+    runtime_profile_t *profile = (runtime_profile_t *)userdata;
+    uint32_t now_us;
+
+    if (!profile)
+        return;
+    now_us = p8p_platform_time_us();
+    switch (event) {
+    case P8P_PROFILE_UPDATE_BEGIN:
+        profile->update_start_us = now_us;
+        break;
+    case P8P_PROFILE_UPDATE_END:
+        profile->average_update_us = smooth_time(
+            profile->average_update_us, now_us - profile->update_start_us);
+        break;
+    case P8P_PROFILE_DRAW_BEGIN:
+        profile->draw_start_us = now_us;
+        break;
+    case P8P_PROFILE_DRAW_END:
+        profile->average_draw_us = smooth_time(
+            profile->average_draw_us, now_us - profile->draw_start_us);
+        break;
     }
-    return 4;
+}
+
+static void set_diagnostics(p8p_runtime_t *runtime, int *visible,
+                            runtime_profile_t *profile,
+                            uint32_t *average_instructions,
+                            int enabled) {
+    *visible = enabled != 0;
+    memset(profile, 0, sizeof(*profile));
+    *average_instructions = 0;
+    p8p_runtime_set_profile_hook(runtime,
+        *visible ? runtime_profile_event : NULL,
+        *visible ? profile : NULL);
 }
 
 typedef struct input_latch {
@@ -194,6 +239,7 @@ typedef struct input_latch {
     p8p_runtime_t *runtime;
     const p8p_control_profile_t *controls;
     uint16_t suppressed;
+    uint32_t instruction_hooks;
 } input_latch_t;
 
 static void input_latch_poll(input_latch_t *latch, int force) {
@@ -217,6 +263,8 @@ static void input_latch_poll(input_latch_t *latch, int force) {
 
 static void input_latch_service(void *userdata) {
     input_latch_t *latch = (input_latch_t *)userdata;
+    if (latch)
+        ++latch->instruction_hooks;
     input_latch_poll(latch, 0);
     if (latch && latch->runtime && latch->controls) {
         uint16_t physical = latch->pending.held &
@@ -296,11 +344,12 @@ int main(int argc, char **argv) {
     uint32_t next_frame_us;
     uint32_t previous_frame_us;
     uint32_t average_period_us = 0;
-    uint32_t average_runtime_us = 0;
     uint32_t average_draw_runtime_us = 0;
     uint32_t average_update_runtime_us = 0;
     uint32_t average_audio_us = 0;
     uint32_t average_present_us = 0;
+    uint32_t average_instructions = 0;
+    runtime_profile_t runtime_profile = {0};
 
 #ifdef OF_PC
     if (argc > 1)
@@ -385,7 +434,8 @@ int main(int argc, char **argv) {
             physical, physical_pressed, menu_open);
         if ((running || runtime_failed) &&
             system_action == P8P_SYSTEM_INPUT_TOGGLE_DIAGNOSTICS) {
-            diagnostics_visible ^= 1;
+            set_diagnostics(runtime, &diagnostics_visible, &runtime_profile,
+                            &average_instructions, !diagnostics_visible);
             suppress_buttons |= physical | physical_pressed;
             if (menu_open) {
                 menu_open = 0;
@@ -440,12 +490,16 @@ int main(int argc, char **argv) {
                     recovery_frames = 0;
                     average_draw_runtime_us = 0;
                     average_update_runtime_us = 0;
+                    memset(&runtime_profile, 0, sizeof(runtime_profile));
+                    average_instructions = 0;
                 }
                 menu_open = 0;
                 suppress_buttons = physical;
                 p8p_platform_audio_set_paused(0);
             } else if (action == P8P_MENU_TOGGLE_DIAGNOSTICS) {
-                diagnostics_visible ^= 1;
+                set_diagnostics(runtime, &diagnostics_visible,
+                                &runtime_profile, &average_instructions,
+                                !diagnostics_visible);
                 menu_open = 0;
                 suppress_buttons = physical;
                 p8p_platform_audio_set_paused(0);
@@ -457,8 +511,9 @@ int main(int argc, char **argv) {
             present_palette = NULL;
         } else if (!menu_open && running) {
             uint32_t runtime_start_us = p8p_platform_time_us();
+            uint32_t instruction_hooks_before = input_latch.instruction_hooks;
             target_fps = p8p_runtime_target_fps(runtime);
-            if (target_fps == 60 && render_divisor > 1) {
+            if (render_divisor > 1) {
                 drew_game_frame = render_phase == 0;
                 render_phase = (render_phase + 1) % render_divisor;
             } else {
@@ -475,7 +530,12 @@ int main(int argc, char **argv) {
                          p8p_runtime_error(runtime));
             }
             uint32_t runtime_us = p8p_platform_time_us() - runtime_start_us;
-            average_runtime_us = smooth_time(average_runtime_us, runtime_us);
+            if (diagnostics_visible) {
+                uint32_t hook_count = input_latch.instruction_hooks -
+                                      instruction_hooks_before;
+                average_instructions = smooth_time(
+                    average_instructions, hook_count * 8192u);
+            }
             if (drew_game_frame)
                 average_draw_runtime_us = smooth_time(
                     average_draw_runtime_us, runtime_us);
@@ -485,11 +545,11 @@ int main(int argc, char **argv) {
             if (running) {
                 present_framebuffer = p8p_runtime_framebuffer(runtime);
                 present_palette = p8p_runtime_screen_palette(runtime);
-                if (target_fps == 60 && drew_game_frame &&
-                    average_draw_runtime_us) {
-                    int desired = adaptive_render_divisor(
-                        average_draw_runtime_us, average_update_runtime_us,
-                        average_audio_us, average_present_us);
+                if (drew_game_frame && average_draw_runtime_us) {
+                    int desired = p8p_render_divisor_for_load(
+                        target_fps, average_draw_runtime_us,
+                        average_update_runtime_us, average_audio_us,
+                        average_present_us);
                     if (desired > render_divisor) {
                         recovery_frames = 0;
                         if (++overload_frames >= 3) {
@@ -499,8 +559,14 @@ int main(int argc, char **argv) {
                         }
                     } else if (desired < render_divisor) {
                         overload_frames = 0;
-                        if (++recovery_frames >= 45) {
-                            --render_divisor;
+                        if (++recovery_frames >= 6) {
+                            /* Timings are already smoothed and have now stayed
+                             * below the lower-load threshold for six rendered
+                             * frames.  Return directly to the divisor they can
+                             * sustain: stepping 4->3->2->1 left particle-heavy
+                             * carts visibly blurry/jerky for almost a second
+                             * after an effect had ended. */
+                            render_divisor = desired;
                             render_phase = 0;
                             recovery_frames = 0;
                         }
@@ -508,11 +574,10 @@ int main(int argc, char **argv) {
                         overload_frames = 0;
                         recovery_frames = 0;
                     }
-                } else if (target_fps != 60) {
-                    render_divisor = 1;
-                    render_phase = 0;
                 }
-                present_required = drew_game_frame || diagnostics_visible;
+                /* Do not let the profiler force extra hardware flips: it
+                 * refreshes with the same cadence as visible game frames. */
+                present_required = drew_game_frame;
             }
         }
         if (!running) {
@@ -532,11 +597,16 @@ int main(int argc, char **argv) {
             present_palette = NULL;
             present_required = 1;
         }
-        if (!menu_open && diagnostics_visible && average_period_us) {
-            unsigned displayed_fps = 1000000u / average_period_us;
-            if (running && target_fps == 60 && render_divisor > 1)
-                displayed_fps = (displayed_fps + (unsigned)render_divisor - 1u) /
-                                (unsigned)render_divisor;
+        if (!menu_open && diagnostics_visible && average_period_us &&
+            present_required) {
+            unsigned logical_fps = 1000000u / average_period_us;
+            unsigned visible_fps;
+            if (logical_fps > (unsigned)target_fps)
+                logical_fps = (unsigned)target_fps;
+            visible_fps = logical_fps;
+            if (running && render_divisor > 1)
+                visible_fps = (visible_fps + (unsigned)render_divisor - 1u) /
+                              (unsigned)render_divisor;
             if (present_palette) {
                 for (int pixel = 0; pixel < P8P_SCREEN_WIDTH * P8P_SCREEN_HEIGHT;
                      ++pixel)
@@ -548,9 +618,14 @@ int main(int argc, char **argv) {
             }
             present_framebuffer = framebuffer;
             present_palette = NULL;
-            draw_profile(framebuffer, displayed_fps,
-                         average_runtime_us, average_audio_us,
-                         average_present_us);
+            p8p_runtime_api_profile_t api_profile;
+            p8p_runtime_get_api_profile(runtime, &api_profile);
+            draw_profile(framebuffer, logical_fps, visible_fps,
+                         runtime_profile.average_update_us,
+                         runtime_profile.average_draw_us,
+                         average_audio_us, average_present_us,
+                         (unsigned)render_divisor, average_instructions,
+                         &api_profile);
         }
         if (running) {
             uint32_t audio_start_us = p8p_platform_time_us();
@@ -579,7 +654,15 @@ int main(int argc, char **argv) {
         int32_t remaining_us = (int32_t)(next_frame_us - now_us);
         if (remaining_us > 0)
             p8p_platform_sleep_us((uint32_t)remaining_us);
-        else
+        else if (remaining_us < -(int32_t)(frame_period_us * 4u))
+            /* Keep a bounded amount of lateness so cheap update-only frames
+             * can repay one expensive rendered frame.  Resetting the deadline
+             * after every single overrun defeated render skipping: Celeste 2
+             * had a 44 ms draw frame followed by an 18 ms update frame (62 ms
+             * per two 30 Hz ticks, within budget), yet the reset made the
+             * cheap frame wait a fresh 33 ms and reduced the game to ~23 FPS.
+             * Drop the debt only when a cart is over four complete frames
+             * behind, preventing an unrecoverable catch-up spiral. */
             next_frame_us = now_us;
         previous_physical = physical;
     }

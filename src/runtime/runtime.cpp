@@ -36,6 +36,10 @@ struct p8p_runtime {
     uint8_t draw_palette[16];
     uint8_t screen_palette[16];
     uint8_t transparent[16];
+    /* Derived fast-path state.  These flags are deliberately not serialized:
+     * they are cheap to rebuild after loading a state or draw-state RAM. */
+    uint8_t palettes_default;
+    uint8_t transparency_default;
     uint8_t buttons;
     uint8_t previous_buttons;
     uint16_t held_frames[7];
@@ -63,6 +67,9 @@ struct p8p_runtime {
     uint8_t restart_requested;
     p8p_runtime_service_fn service_hook;
     void *service_userdata;
+    p8p_runtime_profile_fn profile_hook;
+    void *profile_userdata;
+    uint32_t api_profile_calls[P8P_API_CATEGORY_COUNT];
     uint16_t cart_instruction_slices;
     p8p_runtime_cartdata_load_fn cartdata_load;
     p8p_runtime_cartdata_save_fn cartdata_save;
@@ -110,6 +117,26 @@ static const uint8_t runtime_state_magic[8] = {
 };
 
 static p8p_runtime_t *active_runtime;
+
+static void profile_api(p8p_runtime_api_category_t category) {
+    if (active_runtime && active_runtime->profile_hook &&
+        (unsigned)category < P8P_API_CATEGORY_COUNT)
+        ++active_runtime->api_profile_calls[category];
+}
+
+static void update_palette_default_flags(p8p_runtime_t *runtime) {
+    int palettes_default = 1;
+    int transparency_default = runtime->transparent[0] != 0;
+    for (int i = 0; i < 16; ++i) {
+        if (runtime->draw_palette[i] != i ||
+            runtime->screen_palette[i] != i)
+            palettes_default = 0;
+        if (i && runtime->transparent[i])
+            transparency_default = 0;
+    }
+    runtime->palettes_default = (uint8_t)palettes_default;
+    runtime->transparency_default = (uint8_t)transparency_default;
+}
 
 static void cartdata_flush(p8p_runtime_t *runtime) {
     if (runtime && runtime->cartdata_active && runtime->cartdata_dirty &&
@@ -267,6 +294,7 @@ static void draw_state_from_ram(p8p_runtime_t *runtime) {
             (uint8_t)((runtime->ram[0x5f00 + i] & 0x10) != 0);
         runtime->screen_palette[i] = runtime->ram[0x5f10 + i] & 0x8f;
     }
+    update_palette_default_flags(runtime);
     runtime->clip_x0 = runtime->ram[0x5f20];
     runtime->clip_y0 = runtime->ram[0x5f21];
     runtime->clip_x1 = runtime->ram[0x5f22];
@@ -416,6 +444,7 @@ static void draw_line(p8p_runtime_t *runtime, int x0, int y0, int x1, int y1,
 static P8P_FASTTEXT void draw_sprite(p8p_runtime_t *runtime, int sprite, int x,
                                      int y, int width, int height, int flip_x,
                                      int flip_y) {
+    profile_api(P8P_API_SPRITE);
     int source_x = (sprite & 15) * 8;
     int source_y = (sprite >> 4) * 8;
     int pixel_width = width * 8;
@@ -489,6 +518,7 @@ static P8P_FASTTEXT void draw_hspan(p8p_runtime_t *runtime, int x0, int x1,
 }
 
 static int api_cls(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     p8p_runtime_t *runtime = active_runtime;
     uint8_t color = runtime->draw_palette[arg_int(lua, 1, 0) & 15];
     memset(runtime->framebuffer, color & 15, sizeof(runtime->framebuffer));
@@ -500,6 +530,7 @@ static int api_cls(lua_State *lua) {
 }
 
 static int api_pset(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     p8p_runtime_t *runtime = active_runtime;
     screen_set(runtime, arg_int(lua, 1, 0), arg_int(lua, 2, 0),
                arg_int(lua, 3, runtime->draw_color));
@@ -507,6 +538,7 @@ static int api_pset(lua_State *lua) {
 }
 
 static int api_pget(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     int x = arg_int(lua, 1, 0) - active_runtime->camera_x;
     int y = arg_int(lua, 2, 0) - active_runtime->camera_y;
     push_int(lua, screen_get(active_runtime, x, y));
@@ -514,17 +546,20 @@ static int api_pget(lua_State *lua) {
 }
 
 static int api_sget(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     push_int(lua, sprite_get(active_runtime, arg_int(lua, 1, 0), arg_int(lua, 2, 0)));
     return 1;
 }
 
 static int api_sset(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     sprite_set(active_runtime, arg_int(lua, 1, 0), arg_int(lua, 2, 0),
                (uint8_t)arg_int(lua, 3, 0));
     return 0;
 }
 
 static int api_color(lua_State *lua) {
+    profile_api(P8P_API_DRAW_STATE);
     int previous = active_runtime->draw_color;
     if (lua_gettop(lua) >= 1)
         active_runtime->draw_color = arg_int(lua, 1, 6) & 255;
@@ -534,6 +569,7 @@ static int api_color(lua_State *lua) {
 }
 
 static int api_line(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     p8p_runtime_t *runtime = active_runtime;
     int x0 = arg_int(lua, 1, 0);
     int y0 = arg_int(lua, 2, 0);
@@ -545,6 +581,7 @@ static int api_line(lua_State *lua) {
 }
 
 static int api_rectfill(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     p8p_runtime_t *runtime = active_runtime;
     int x0 = arg_int(lua, 1, 0);
     int y0 = arg_int(lua, 2, 0);
@@ -569,6 +606,7 @@ static int api_rectfill(lua_State *lua) {
 }
 
 static int api_rect(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     p8p_runtime_t *runtime = active_runtime;
     int x0 = arg_int(lua, 1, 0);
     int y0 = arg_int(lua, 2, 0);
@@ -583,6 +621,7 @@ static int api_rect(lua_State *lua) {
 }
 
 static int api_circfill(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     p8p_runtime_t *runtime = active_runtime;
     int cx = arg_int(lua, 1, 0);
     int cy = arg_int(lua, 2, 0);
@@ -603,6 +642,7 @@ static int api_circfill(lua_State *lua) {
 }
 
 static int api_circ(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     p8p_runtime_t *runtime = active_runtime;
     int cx = arg_int(lua, 1, 0);
     int cy = arg_int(lua, 2, 0);
@@ -639,6 +679,7 @@ static int api_spr(lua_State *lua) {
 }
 
 static int api_sspr(lua_State *lua) {
+    profile_api(P8P_API_SPRITE);
     p8p_runtime_t *runtime = active_runtime;
     int source_x = arg_int(lua, 1, 0);
     int source_y = arg_int(lua, 2, 0);
@@ -769,6 +810,7 @@ static void draw_oval(p8p_runtime_t *runtime, int x0, int y0, int x1, int y1,
 }
 
 static int api_oval(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     draw_oval(active_runtime, arg_int(lua, 1, 0), arg_int(lua, 2, 0),
               arg_int(lua, 3, 0), arg_int(lua, 4, 0),
               arg_int(lua, 5, active_runtime->draw_color), 0);
@@ -776,6 +818,7 @@ static int api_oval(lua_State *lua) {
 }
 
 static int api_ovalfill(lua_State *lua) {
+    profile_api(P8P_API_GRAPHICS);
     draw_oval(active_runtime, arg_int(lua, 1, 0), arg_int(lua, 2, 0),
               arg_int(lua, 3, 0), arg_int(lua, 4, 0),
               arg_int(lua, 5, active_runtime->draw_color), 1);
@@ -783,6 +826,7 @@ static int api_ovalfill(lua_State *lua) {
 }
 
 static int api_tline(lua_State *lua) {
+    profile_api(P8P_API_SPRITE);
     p8p_runtime_t *runtime = active_runtime;
     int x0 = arg_int(lua, 1, 0);
     int y0 = arg_int(lua, 2, 0);
@@ -834,28 +878,38 @@ static int api_tline(lua_State *lua) {
 }
 
 static int api_mget(lua_State *lua) {
-    push_int(lua, map_get(active_runtime, arg_int(lua, 1, 0), arg_int(lua, 2, 0)));
+    profile_api(P8P_API_MEMORY);
+    /* lua_tonumber(nil) is zero, which is exactly mget()'s fallback.  BAS
+     * Escape calls this hundreds of times per frame; avoiding two gettop +
+     * nil checks on every collision probe is measurable on the 100 MHz CPU. */
+    int x = (int32_t)lua_tonumber(lua, 1);
+    int y = (int32_t)lua_tonumber(lua, 2);
+    push_int(lua, map_get(active_runtime, x, y));
     return 1;
 }
 
 static int api_mset(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     map_set(active_runtime, arg_int(lua, 1, 0), arg_int(lua, 2, 0),
             (uint8_t)arg_int(lua, 3, 0));
     return 0;
 }
 
 static int api_fget(lua_State *lua) {
-    int sprite = arg_int(lua, 1, 0) & 255;
+    profile_api(P8P_API_MEMORY);
+    int sprite = (int32_t)lua_tonumber(lua, 1) & 255;
     uint8_t flags = active_runtime->ram[0x3000 + sprite];
     if (lua_gettop(lua) < 2) {
         push_int(lua, flags);
     } else {
-        lua_pushboolean(lua, (flags & (1u << (arg_int(lua, 2, 0) & 7))) != 0);
+        int flag = (int32_t)lua_tonumber(lua, 2) & 7;
+        lua_pushboolean(lua, (flags & (1u << flag)) != 0);
     }
     return 1;
 }
 
 static int api_fset(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int sprite = arg_int(lua, 1, 0) & 255;
     if (lua_gettop(lua) < 3) {
         active_runtime->ram[0x3000 + sprite] = (uint8_t)arg_int(lua, 2, 0);
@@ -869,7 +923,72 @@ static int api_fset(lua_State *lua) {
     return 0;
 }
 
+/* map() spends most of its time dispatching hundreds of ordinary 8x8 tiles.
+ * Keep that hot path separate from the fully general scaled/flipped sprite
+ * renderer so it does not rebuild the same width, height and camera state for
+ * every cell. */
+static void draw_map_tile(p8p_runtime_t *runtime, int sprite,
+                          int screen_x, int screen_y, int sprite_base) {
+    profile_api(P8P_API_SPRITE);
+    int start_x = screen_x < runtime->clip_x0 ?
+        runtime->clip_x0 - screen_x : 0;
+    int start_y = screen_y < runtime->clip_y0 ?
+        runtime->clip_y0 - screen_y : 0;
+    int end_x = screen_x + 8 > runtime->clip_x1 ?
+        runtime->clip_x1 - screen_x : 8;
+    int end_y = screen_y + 8 > runtime->clip_y1 ?
+        runtime->clip_y1 - screen_y : 8;
+    if (start_x >= end_x || start_y >= end_y)
+        return;
+
+    int source_x = (sprite & 15) * 8;
+    int source_y = (sprite >> 4) * 8;
+    int default_colors = runtime->palettes_default &&
+                         runtime->transparency_default;
+    runtime->screen_ram_dirty = 1;
+    for (int y = start_y; y < end_y; ++y) {
+        const uint8_t *source = runtime->ram + sprite_base +
+            (source_y + y) * 64 + source_x / 2;
+        uint8_t *destination = runtime->framebuffer +
+            (screen_y + y) * 128 + screen_x;
+        int x = start_x;
+        if (x & 1) {
+            uint8_t color = source[x >> 1] >> 4;
+            if (default_colors) {
+                if (color) destination[x] = color;
+            } else if (!runtime->transparent[color]) {
+                destination[x] = runtime->draw_palette[color] & 15;
+            }
+            ++x;
+        }
+        for (; x + 1 < end_x; x += 2) {
+            uint8_t packed = source[x >> 1];
+            uint8_t color0 = packed & 15;
+            uint8_t color1 = packed >> 4;
+            if (default_colors) {
+                if (color0) destination[x] = color0;
+                if (color1) destination[x + 1] = color1;
+            } else {
+                if (!runtime->transparent[color0])
+                    destination[x] = runtime->draw_palette[color0] & 15;
+                if (!runtime->transparent[color1])
+                    destination[x + 1] = runtime->draw_palette[color1] & 15;
+            }
+        }
+        if (x < end_x) {
+            uint8_t packed = source[x >> 1];
+            uint8_t color = (uint8_t)((x & 1) ? packed >> 4 : packed & 15);
+            if (default_colors) {
+                if (color) destination[x] = color;
+            } else if (!runtime->transparent[color]) {
+                destination[x] = runtime->draw_palette[color] & 15;
+            }
+        }
+    }
+}
+
 static int api_map(lua_State *lua) {
+    profile_api(P8P_API_SPRITE);
     p8p_runtime_t *runtime = active_runtime;
     int cell_x = arg_int(lua, 1, 0);
     int cell_y = arg_int(lua, 2, 0);
@@ -892,18 +1011,27 @@ static int api_map(lua_State *lua) {
     if (first_y < 0) first_y = 0;
     if (end_x > cell_w) end_x = cell_w;
     if (end_y > cell_h) end_y = cell_h;
+    int sprite_base = (int)runtime->ram[0x5f54] << 8;
+    int fast_sprite_base = sprite_base >= 0 &&
+                           sprite_base + 8192 <= 0x10000;
     for (int y = first_y; y < end_y; ++y) {
         for (int x = first_x; x < end_x; ++x) {
             int sprite = map_get(runtime, cell_x + x, cell_y + y);
-            if (sprite && (!layer || (runtime->ram[0x3000 + sprite] & layer)))
-                draw_sprite(runtime, sprite, screen_x + x * 8,
-                            screen_y + y * 8, 1, 1, 0, 0);
+            if (sprite && (!layer || (runtime->ram[0x3000 + sprite] & layer))) {
+                if (fast_sprite_base)
+                    draw_map_tile(runtime, sprite, origin_x + x * 8,
+                                  origin_y + y * 8, sprite_base);
+                else
+                    draw_sprite(runtime, sprite, screen_x + x * 8,
+                                screen_y + y * 8, 1, 1, 0, 0);
+            }
         }
     }
     return 0;
 }
 
 static int api_camera(lua_State *lua) {
+    profile_api(P8P_API_DRAW_STATE);
     int old_x = active_runtime->camera_x;
     int old_y = active_runtime->camera_y;
     active_runtime->camera_x = arg_int(lua, 1, 0);
@@ -915,6 +1043,7 @@ static int api_camera(lua_State *lua) {
 }
 
 static int api_clip(lua_State *lua) {
+    profile_api(P8P_API_DRAW_STATE);
     p8p_runtime_t *runtime = active_runtime;
     int old_x0 = runtime->clip_x0;
     int old_x1 = runtime->clip_x1;
@@ -945,13 +1074,17 @@ static int api_clip(lua_State *lua) {
 }
 
 static int api_pal(lua_State *lua) {
+    profile_api(P8P_API_DRAW_STATE);
     p8p_runtime_t *runtime = active_runtime;
     if (lua_gettop(lua) == 0) {
+        if (runtime->palettes_default)
+            return 0;
         for (int i = 0; i < 16; ++i) {
             runtime->draw_palette[i] = (uint8_t)i;
             runtime->screen_palette[i] = (uint8_t)i;
             palette_entry_to_ram(runtime, i);
         }
+        runtime->palettes_default = 1;
     } else if (lua_istable(lua, 1)) {
         int screen = arg_int(lua, 2, 0) == 1;
         lua_pushnil(lua);
@@ -960,9 +1093,13 @@ static int api_pal(lua_State *lua) {
                 int from = (int)lua_tonumber(lua, -2) & 15;
                 int to = (int)lua_tonumber(lua, -1) &
                          (screen ? 0x8f : 15);
-                if (screen) runtime->screen_palette[from] = (uint8_t)to;
-                else runtime->draw_palette[from] = (uint8_t)to;
-                palette_entry_to_ram(runtime, from);
+                uint8_t *entry = screen ? &runtime->screen_palette[from] :
+                                          &runtime->draw_palette[from];
+                if (*entry != (uint8_t)to) {
+                    *entry = (uint8_t)to;
+                    runtime->palettes_default = 0;
+                    palette_entry_to_ram(runtime, from);
+                }
             }
             lua_pop(lua, 1);
         }
@@ -972,11 +1109,14 @@ static int api_pal(lua_State *lua) {
         int to = arg_int(lua, 2, from) & (screen ? 0x8f : 15);
         int previous = screen ? runtime->screen_palette[from]
                               : runtime->draw_palette[from];
-        if (screen)
-            runtime->screen_palette[from] = (uint8_t)to;
-        else
-            runtime->draw_palette[from] = (uint8_t)to;
-        palette_entry_to_ram(runtime, from);
+        if (previous != to) {
+            if (screen)
+                runtime->screen_palette[from] = (uint8_t)to;
+            else
+                runtime->draw_palette[from] = (uint8_t)to;
+            runtime->palettes_default = 0;
+            palette_entry_to_ram(runtime, from);
+        }
         push_int(lua, previous);
         return 1;
     }
@@ -984,22 +1124,33 @@ static int api_pal(lua_State *lua) {
 }
 
 static int api_palt(lua_State *lua) {
+    profile_api(P8P_API_DRAW_STATE);
     p8p_runtime_t *runtime = active_runtime;
     if (lua_gettop(lua) == 0) {
+        if (runtime->transparency_default)
+            return 0;
         memset(runtime->transparent, 0, sizeof(runtime->transparent));
         runtime->transparent[0] = 1;
         for (int color = 0; color < 16; ++color)
-            palette_entry_to_ram(runtime, color);
+            runtime->ram[0x5f00 + color] = (uint8_t)(
+                runtime->draw_palette[color] | (color == 0 ? 0x10 : 0));
+        runtime->transparency_default = 1;
     } else {
         int color = arg_int(lua, 1, 0) & 15;
-        runtime->transparent[color] =
+        uint8_t transparent =
             (uint8_t)(lua_gettop(lua) < 2 || lua_toboolean(lua, 2));
-        palette_entry_to_ram(runtime, color);
+        if (runtime->transparent[color] != transparent) {
+            runtime->transparent[color] = transparent;
+            runtime->transparency_default = 0;
+            runtime->ram[0x5f00 + color] = (uint8_t)(
+                runtime->draw_palette[color] | (transparent ? 0x10 : 0));
+        }
     }
     return 0;
 }
 
 static int api_btn(lua_State *lua) {
+    profile_api(P8P_API_INPUT);
     if (lua_gettop(lua) == 0) {
         push_int(lua, active_runtime->buttons & 0x7f);
     } else {
@@ -1013,6 +1164,7 @@ static int api_btn(lua_State *lua) {
 }
 
 static int api_btnp(lua_State *lua) {
+    profile_api(P8P_API_INPUT);
     p8p_runtime_t *runtime = active_runtime;
     if (lua_gettop(lua) == 0) {
         int mask = 0;
@@ -1036,6 +1188,7 @@ static int api_btnp(lua_State *lua) {
 }
 
 static int api_peek(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int address = arg_int(lua, 1, 0) & 0xffff;
     int count = arg_int(lua, 2, 1);
     if (count < 1) count = 1;
@@ -1048,6 +1201,7 @@ static int api_peek(lua_State *lua) {
 }
 
 static int api_poke(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int address = arg_int(lua, 1, 0) & 0xffff;
     int values = lua_gettop(lua) - 1;
     if (values < 1)
@@ -1068,6 +1222,7 @@ static int api_poke(lua_State *lua) {
 }
 
 static int api_peek2(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int address = arg_int(lua, 1, 0);
     if (address < 0 || address > 0xfffe) {
         push_int(lua, 0);
@@ -1081,6 +1236,7 @@ static int api_peek2(lua_State *lua) {
 }
 
 static int api_poke2(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int address = arg_int(lua, 1, 0);
     int value = arg_int(lua, 2, 0);
     if (address < 0 || address > 0xfffe)
@@ -1097,6 +1253,7 @@ static int api_poke2(lua_State *lua) {
 }
 
 static int api_peek4(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int address = arg_int(lua, 1, 0);
     if (address < 0 || address > 0xfffc) {
         lua_pushnumber(lua, fix32(0));
@@ -1113,6 +1270,7 @@ static int api_peek4(lua_State *lua) {
 }
 
 static int api_poke4(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int address = arg_int(lua, 1, 0);
     if (address < 0 || address > 0xfffc)
         return 0;
@@ -1131,6 +1289,7 @@ static int api_poke4(lua_State *lua) {
 }
 
 static int api_memset(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int destination = arg_int(lua, 1, 0);
     int value = arg_int(lua, 2, 0);
     int length = arg_int(lua, 3, 0);
@@ -1150,6 +1309,7 @@ static int api_memset(lua_State *lua) {
 }
 
 static int api_memcpy(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int destination = arg_int(lua, 1, 0);
     int source = arg_int(lua, 2, 0);
     int length = arg_int(lua, 3, 0);
@@ -1172,6 +1332,7 @@ static int api_memcpy(lua_State *lua) {
 }
 
 static int api_reload(lua_State *lua) {
+    profile_api(P8P_API_MEMORY);
     int destination = arg_int(lua, 1, 0);
     int source = arg_int(lua, 2, 0);
     int length = arg_int(lua, 3, 0x4300);
@@ -1250,6 +1411,7 @@ static void update_rng(p8p_runtime_t *runtime) {
 }
 
 static int api_srand(lua_State *lua) {
+    profile_api(P8P_API_HELPER);
     p8p_runtime_t *runtime = active_runtime;
     fix32 seed = arg_number(lua, 1, fix32(0));
     runtime->rng[0] = seed ? (uint32_t)seed.bits() : 0xdeadbeef;
@@ -1260,6 +1422,7 @@ static int api_srand(lua_State *lua) {
 }
 
 static int api_rnd(lua_State *lua) {
+    profile_api(P8P_API_HELPER);
     p8p_runtime_t *runtime = active_runtime;
     update_rng(runtime);
     if (lua_istable(lua, 1)) {
@@ -1278,6 +1441,7 @@ static int api_rnd(lua_State *lua) {
 }
 
 static int api_time(lua_State *lua) {
+    profile_api(P8P_API_HELPER);
     double seconds = (double)active_runtime->frame_count /
                      (double)active_runtime->target_fps;
     lua_pushnumber(lua, fix32(seconds));
@@ -1285,6 +1449,7 @@ static int api_time(lua_State *lua) {
 }
 
 static int api_cursor(lua_State *lua) {
+    profile_api(P8P_API_TEXT);
     int old_x = active_runtime->cursor_x;
     int old_y = active_runtime->cursor_y;
     if (lua_gettop(lua) >= 1) active_runtime->cursor_x = arg_int(lua, 1, old_x);
@@ -1367,6 +1532,7 @@ static uint16_t glyph_bits(uint8_t character) {
 }
 
 static int api_print(lua_State *lua) {
+    profile_api(P8P_API_TEXT);
     size_t text_length = 0;
     const char *text = luaL_tolstring(lua, 1, &text_length);
     int x = arg_int(lua, 2, active_runtime->cursor_x);
@@ -1424,6 +1590,7 @@ static int api_flip(lua_State *lua) {
 }
 
 static int api_fillp(lua_State *lua) {
+    profile_api(P8P_API_DRAW_STATE);
     p8p_runtime_t *runtime = active_runtime;
     int32_t previous = ((int32_t)runtime->fill_pattern << 16) |
                        ((int32_t)runtime->fill_pattern_transparent << 8);
@@ -1438,6 +1605,7 @@ static int api_fillp(lua_State *lua) {
 }
 
 static int api_stat(lua_State *lua) {
+    profile_api(P8P_API_HELPER);
     p8p_runtime_t *runtime = active_runtime;
     int item = arg_int(lua, 1, 0);
     switch (item) {
@@ -1540,13 +1708,13 @@ static int api_serial(lua_State *lua) {
 }
 
 static int api_all_next(lua_State *lua) {
+    profile_api(P8P_API_HELPER);
     if (!lua_istable(lua, lua_upvalueindex(1))) {
         lua_pushnil(lua);
         return 1;
     }
     int index = (int)lua_tointeger(lua, lua_upvalueindex(2));
-    lua_pushinteger(lua, index);
-    lua_gettable(lua, lua_upvalueindex(1));
+    lua_rawgeti(lua, lua_upvalueindex(1), index);
     if (lua_rawequal(lua, -1, lua_upvalueindex(3))) {
         lua_pop(lua, 1);
         ++index;
@@ -1555,8 +1723,7 @@ static int api_all_next(lua_State *lua) {
     }
     int length = (int)lua_rawlen(lua, lua_upvalueindex(1));
     while (index <= length) {
-        lua_pushinteger(lua, index);
-        lua_gettable(lua, lua_upvalueindex(1));
+        lua_rawgeti(lua, lua_upvalueindex(1), index);
         if (!lua_isnil(lua, -1))
             break;
         lua_pop(lua, 1);
@@ -1576,6 +1743,7 @@ static int api_all_next(lua_State *lua) {
 }
 
 static int api_all(lua_State *lua) {
+    profile_api(P8P_API_HELPER);
     if (lua_gettop(lua) >= 1)
         lua_pushvalue(lua, 1);
     else
@@ -1587,14 +1755,14 @@ static int api_all(lua_State *lua) {
 }
 
 static int api_foreach(lua_State *lua) {
+    profile_api(P8P_API_HELPER);
     if (!lua_istable(lua, 1) || !lua_isfunction(lua, 2))
         return 0;
     lua_settop(lua, 2);
 
     int index = 1;
     while (index <= (int)lua_rawlen(lua, 1)) {
-        lua_pushinteger(lua, index);
-        lua_gettable(lua, 1);
+        lua_rawgeti(lua, 1, index);
         if (lua_isnil(lua, -1)) {
             lua_pop(lua, 1);
             ++index;
@@ -1608,8 +1776,7 @@ static int api_foreach(lua_State *lua) {
         lua_pushvalue(lua, -2);
         lua_call(lua, 1, 0);
 
-        lua_pushinteger(lua, index);
-        lua_gettable(lua, 1);
+        lua_rawgeti(lua, 1, index);
         int unchanged = lua_rawequal(lua, -1, -2);
         lua_pop(lua, 2);
         if (unchanged)
@@ -1768,17 +1935,31 @@ static int dispatch_frame(lua_State *lua) {
     const char *update = runtime->target_fps == 60 ? "_update60" : "_update";
 
     lua_getglobal(lua, update);
-    if (lua_isfunction(lua, -1))
+    if (lua_isfunction(lua, -1)) {
+        if (runtime->profile_hook)
+            runtime->profile_hook(runtime->profile_userdata,
+                                  P8P_PROFILE_UPDATE_BEGIN);
         lua_call(lua, 0, 0);
-    else
+        if (runtime->profile_hook)
+            runtime->profile_hook(runtime->profile_userdata,
+                                  P8P_PROFILE_UPDATE_END);
+    } else {
         lua_pop(lua, 1);
+    }
 
     if (runtime->draw_frame) {
         lua_getglobal(lua, "_draw");
-        if (lua_isfunction(lua, -1))
+        if (lua_isfunction(lua, -1)) {
+            if (runtime->profile_hook)
+                runtime->profile_hook(runtime->profile_userdata,
+                                      P8P_PROFILE_DRAW_BEGIN);
             lua_call(lua, 0, 0);
-        else
+            if (runtime->profile_hook)
+                runtime->profile_hook(runtime->profile_userdata,
+                                      P8P_PROFILE_DRAW_END);
+        } else {
             lua_pop(lua, 1);
+        }
     }
     return 0;
 }
@@ -1796,6 +1977,8 @@ extern "C" p8p_runtime_t *p8p_runtime_create(void) {
         runtime->screen_palette[i] = (uint8_t)i;
     }
     runtime->transparent[0] = 1;
+    runtime->palettes_default = 1;
+    runtime->transparency_default = 1;
     runtime->audio = p8p_audio_create(runtime->ram);
     if (!runtime->audio) {
         free(runtime);
@@ -1853,6 +2036,8 @@ extern "C" int p8p_runtime_load(p8p_runtime_t *runtime, const p8p_cart_t *cart) 
     }
     memset(runtime->transparent, 0, sizeof(runtime->transparent));
     runtime->transparent[0] = 1;
+    runtime->palettes_default = 1;
+    runtime->transparency_default = 1;
     runtime->camera_x = runtime->camera_y = 0;
     runtime->clip_x0 = runtime->clip_y0 = 0;
     runtime->clip_x1 = runtime->clip_y1 = 128;
@@ -1933,6 +2118,26 @@ extern "C" void p8p_runtime_set_service_hook(
     install_service_hook(runtime);
 }
 
+extern "C" void p8p_runtime_set_profile_hook(
+    p8p_runtime_t *runtime, p8p_runtime_profile_fn callback, void *userdata) {
+    if (!runtime)
+        return;
+    runtime->profile_hook = callback;
+    runtime->profile_userdata = userdata;
+}
+
+extern "C" void p8p_runtime_get_api_profile(
+    const p8p_runtime_t *runtime, p8p_runtime_api_profile_t *profile) {
+    if (!profile)
+        return;
+    if (!runtime) {
+        memset(profile, 0, sizeof(*profile));
+        return;
+    }
+    memcpy(profile->calls, runtime->api_profile_calls,
+           sizeof(profile->calls));
+}
+
 extern "C" void p8p_runtime_set_cartdata_hooks(
     p8p_runtime_t *runtime, p8p_runtime_cartdata_load_fn load,
     p8p_runtime_cartdata_save_fn save, void *userdata) {
@@ -1987,6 +2192,9 @@ extern "C" int p8p_runtime_step_with_draw(p8p_runtime_t *runtime,
     if (runtime->restart_requested)
         return restart_current_cart(runtime);
     active_runtime = runtime;
+    if (runtime->profile_hook)
+        memset(runtime->api_profile_calls, 0,
+               sizeof(runtime->api_profile_calls));
     runtime->draw_frame = draw_frame != 0;
     runtime->previous_buttons = runtime->buttons;
     runtime->buttons = buttons & 0x7f;
@@ -2063,6 +2271,7 @@ static void restore_fixed_state(p8p_runtime_t *runtime,
     memcpy(runtime->draw_palette, state->draw_palette, sizeof(runtime->draw_palette));
     memcpy(runtime->screen_palette, state->screen_palette, sizeof(runtime->screen_palette));
     memcpy(runtime->transparent, state->transparent, sizeof(runtime->transparent));
+    update_palette_default_flags(runtime);
     runtime->buttons = state->buttons;
     runtime->previous_buttons = state->previous_buttons;
     memcpy(runtime->held_frames, state->held_frames, sizeof(runtime->held_frames));

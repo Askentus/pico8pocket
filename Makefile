@@ -18,13 +18,13 @@ include $(PROJECT_ROOT)/mk/z8lua.mk
 deps:
 	@./scripts/fetch-deps.sh
 
-$(TEST_BIN): tests/test_main.c src/app/system_input.c src/runtime/cart.c src/runtime/cart_png.c \
+$(TEST_BIN): tests/test_main.c src/app/system_input.c src/app/scheduler.c src/runtime/cart.c src/runtime/cart_png.c \
 		src/runtime/display.c include/p8p/cart.h include/p8p/display.h \
 		$(MINIZ_ROOT)/miniz.c
 	@mkdir -p $(dir $@)
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Wno-strict-prototypes -pedantic \
 		-Iinclude -I$(MINIZ_ROOT) \
-		tests/test_main.c src/app/system_input.c src/runtime/cart.c src/runtime/cart_png.c \
+		tests/test_main.c src/app/system_input.c src/app/scheduler.c src/runtime/cart.c src/runtime/cart_png.c \
 		src/runtime/display.c $(MINIZ_ROOT)/miniz.c -o $@
 
 $(RUNTIME_TEST_BIN): tests/runtime_test.cpp src/runtime/runtime.cpp src/runtime/audio.c src/runtime/cart.c src/app/state_store.c src/app/settings.c \

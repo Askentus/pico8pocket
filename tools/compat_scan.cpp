@@ -46,7 +46,8 @@ static uint8_t scripted_input(unsigned frame, uint32_t *rng) {
 }
 
 static int run_scan(const char *path, unsigned frames, uint32_t seed,
-                    int draw_frame, const char *setup_expression) {
+                    int draw_frame, const char *setup_expression,
+                    int service_hooks) {
     p8p_cart_t cart = {};
     p8p_runtime_t *runtime = nullptr;
     uint64_t elapsed_ns = 0;
@@ -80,11 +81,12 @@ static int run_scan(const char *path, unsigned frames, uint32_t seed,
 #else
     (void)setup_expression;
 #endif
-    std::printf("cart=%s fps=%d lua=%zu frames=%u seed=%u draw=%d\n", path,
+    std::printf("cart=%s fps=%d lua=%zu frames=%u seed=%u draw=%d hook=%d\n", path,
                 p8p_runtime_target_fps(runtime), cart.lua_size, frames, seed,
-                draw_frame);
+                draw_frame, service_hooks);
     lua_service_hooks = 0;
-    p8p_runtime_set_service_hook(runtime, count_lua_service_hook, nullptr);
+    if (service_hooks)
+        p8p_runtime_set_service_hook(runtime, count_lua_service_hook, nullptr);
     for (unsigned frame = 0; frame < frames; ++frame) {
         uint8_t buttons = setup_expression ? 0 : scripted_input(frame, &seed);
         auto start = std::chrono::steady_clock::now();
@@ -210,7 +212,7 @@ int main(int argc, char **argv) {
     if (argc < 2) {
         std::fprintf(stderr,
                      "usage: %s CART [FRAMES [SEED [nodraw]]] | "
-                     "CART --bench EXPR FRAMES [SEED [nodraw]] | "
+                     "CART --bench EXPR FRAMES [SEED [nodraw [nohook]]] | "
                      "CART --probe\n",
                      argv[0]);
         return 1;
@@ -238,7 +240,10 @@ int main(int argc, char **argv) {
             (uint32_t)std::strtoul(argv[5], nullptr, 0) : 0x12345678u;
         int draw_frame = !(argc >= 7 &&
                            std::strcmp(argv[6], "nodraw") == 0);
-        return run_scan(argv[1], frames, seed, draw_frame, argv[3]);
+        int service_hooks = !(argc >= 8 &&
+                              std::strcmp(argv[7], "nohook") == 0);
+        return run_scan(argv[1], frames, seed, draw_frame, argv[3],
+                        service_hooks);
     }
 #endif
     unsigned frames = argc >= 3 ? (unsigned)std::strtoul(argv[2], nullptr, 0) :
@@ -246,5 +251,6 @@ int main(int argc, char **argv) {
     uint32_t seed = argc >= 4 ? (uint32_t)std::strtoul(argv[3], nullptr, 0) :
                                 0x12345678u;
     int draw_frame = !(argc >= 5 && std::strcmp(argv[4], "nodraw") == 0);
-    return run_scan(argv[1], frames, seed, draw_frame, nullptr);
+    int service_hooks = !(argc >= 6 && std::strcmp(argv[5], "nohook") == 0);
+    return run_scan(argv[1], frames, seed, draw_frame, nullptr, service_hooks);
 }

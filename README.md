@@ -1,7 +1,7 @@
 # Pico8Pocket
 
 PICO-8-compatible player for the Analogue Pocket, running on the
-[openfpgaOS RISC-V environment](https://github.com/openfpgaOS/openfgpaSDK).
+[openfpgaOS RISC-V environment](https://github.com/openfpgaOS/openfpgaSDK).
 
 The compatibility target is PICO-8 **v0.2.7**. Both `.p8` and `.p8.png`
 cartridges are in scope. The current alpha executes P8 Lua through z8lua,
@@ -40,10 +40,9 @@ started and how you can help improve it.
   correct 1280×1280 image. Native 1408×1408 (11×) remains the target, but the
   stock bitstream's direct 128×128 mode crops the image on real hardware and
   is disabled until its scanout timing is fixed.
-- The optional `FULL SOFT` display mode keeps that proven 320×288 timing but
-  sharp-bilinear scales the game to 288×288 in RGB565. Pocket presents it as a
-  1440×1440 square; the default remains the faster, crisp `2X` pixel-perfect
-  path.
+- Hardware testing showed that the experimental soft full-screen scaler was
+  too blurry, so it has been removed. `2X` remains the default crisp,
+  pixel-perfect path while native 11× output is investigated separately.
 - Drawing uses an unpacked one-byte-per-pixel working surface and lazily
   synchronizes PICO-8's packed screen RAM for memory APIs. This removes the
   packed read-modify-write from the common sprite/pixel path and maps the
@@ -55,9 +54,13 @@ started and how you can help improve it.
 - Pressing Select opens the PICO-8-styled system menu and fully pauses the
   cartridge with a short audio fade. Holding Select and pressing the physical X
   button, or pressing X from the main system menu, toggles the opt-in
-  profiler: white is FPS, green is Lua/update/draw milliseconds, orange is audio
-  milliseconds, and blue is video presentation milliseconds. The profiler is
-  hidden on every fresh launch.
+  profiler. Its labelled rows show logical FPS (`L`), visible FPS (`V`), update
+  time (`U`), draw time (`D`), audio time (`A`), presentation time (`P`), the
+  active render divisor (`R`) and approximate thousands of Lua instructions per
+  logical frame (`K`). A second column counts sprite/map work (`S`), primitive
+  graphics calls (`G`), memory/map/flag access (`M`), draw-state changes (`C`),
+  text calls (`T`), input reads (`B`) and helpers such as `rnd`, `all` and
+  `foreach` (`Q`). The profiler is hidden on every fresh launch.
 - The paused cartridge behind the system menu is rendered through a dedicated
   15%-brightness palette before the checkerboard shade is applied, while menu
   text and panels retain their full palette brightness.
@@ -75,8 +78,7 @@ started and how you can help improve it.
   wrapping. The input service hook is deliberately sparse, and scaled sprites
   and ellipses avoid per-pixel division/64-bit implicit-equation work.
 - The menu provides Quick Save, nine numbered state slots, 64×64 previews,
-  guarded deletion, restart, cart switching, controls, pixel-perfect and
-  full-screen soft scale,
+  guarded deletion, restart, cart switching, controls, pixel-perfect scale,
   volume/mute, cartridge info and English or Russian UI. States serialize Lua
   closures/globals through Eris together with RAM, framebuffer, palettes, RNG,
   input and audio channel position.
@@ -105,9 +107,10 @@ started and how you can help improve it.
 This is still an alpha, not a full-compatibility release. Exact custom
 instrument/filter/reverb audio behavior, local multicart switching, the PICO-8
 pause menu, ZIP extraction and the indexed in-core browser are not implemented
-yet. Hardware timing, state I/O and the expanded runtime need physical-Pocket
-validation; scaler behavior beyond the initial boot/scaling check also needs
-validation.
+yet. Save-state persistence, menu/input behavior, profiling and the current 2X
+presentation path have been validated on physical Pocket hardware. CPU-heavy
+cartridges and scaler behavior beyond the established 2X path still need more
+compatibility and performance work.
 
 ## Build
 

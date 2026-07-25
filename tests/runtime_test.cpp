@@ -12,11 +12,17 @@ static int failures;
 static int service_hook_calls;
 static int inject_pause;
 static p8p_runtime_t *service_hook_runtime;
+static int profile_event_calls[4];
 
 static void count_service_hook(void *) {
     ++service_hook_calls;
     if (inject_pause && service_hook_runtime)
         p8p_runtime_set_live_buttons(service_hook_runtime, 1u << 6);
+}
+
+static void count_profile_event(void *, p8p_runtime_profile_event_t event) {
+    if ((unsigned)event < 4)
+        ++profile_event_calls[event];
 }
 
 static int test_cartdata_load(void *userdata, const char *id,
@@ -99,6 +105,7 @@ int main(void) {
     size_t saved_state_size = 0;
     p8p_cart_hash_t cart_hash = {};
     p8p_state_meta_t state_meta = {};
+    p8p_runtime_api_profile_t api_profile = {};
     unsigned char config_pattern[32];
     unsigned char config_readback[32];
     char store_path[] = "/tmp/pico8pocket-state-XXXXXX";
@@ -191,7 +198,6 @@ int main(void) {
     CHECK(p8p_cart_load_text_memory(env_fallback_source,
                                     sizeof(env_fallback_source) - 1,
                                     &env_fallback_cart) == 0);
-
     runtime = p8p_runtime_create();
     CHECK(runtime != NULL);
     if (runtime) {
@@ -209,8 +215,37 @@ int main(void) {
                                      sizeof(cartdata_readback)) == 0);
         CHECK(cartdata_readback[2] == 1);
         p8p_runtime_set_service_hook(runtime, count_service_hook, NULL);
+        memset(profile_event_calls, 0, sizeof(profile_event_calls));
+        p8p_runtime_set_profile_hook(runtime, count_profile_event, NULL);
         CHECK(p8p_runtime_step(runtime, 1u << 1) == 0);
         CHECK(service_hook_calls > 0);
+        CHECK(profile_event_calls[P8P_PROFILE_UPDATE_BEGIN] == 1);
+        CHECK(profile_event_calls[P8P_PROFILE_UPDATE_END] == 1);
+        CHECK(profile_event_calls[P8P_PROFILE_DRAW_BEGIN] == 1);
+        CHECK(profile_event_calls[P8P_PROFILE_DRAW_END] == 1);
+        p8p_runtime_get_api_profile(runtime, &api_profile);
+        CHECK(api_profile.calls[P8P_API_SPRITE] > 0);
+        CHECK(api_profile.calls[P8P_API_GRAPHICS] > 0);
+        CHECK(api_profile.calls[P8P_API_MEMORY] > 0);
+        CHECK(api_profile.calls[P8P_API_DRAW_STATE] > 0);
+        CHECK(api_profile.calls[P8P_API_TEXT] > 0);
+        CHECK(api_profile.calls[P8P_API_INPUT] > 0);
+        p8p_runtime_set_profile_hook(runtime, NULL, NULL);
+        memset(profile_event_calls, 0, sizeof(profile_event_calls));
+        p8p_runtime_set_profile_hook(runtime, count_profile_event, NULL);
+        CHECK(p8p_runtime_step_with_draw(runtime, 0, 0) == 0);
+        CHECK(profile_event_calls[P8P_PROFILE_UPDATE_BEGIN] == 1);
+        CHECK(profile_event_calls[P8P_PROFILE_UPDATE_END] == 1);
+        CHECK(profile_event_calls[P8P_PROFILE_DRAW_BEGIN] == 0);
+        CHECK(profile_event_calls[P8P_PROFILE_DRAW_END] == 0);
+        p8p_runtime_get_api_profile(runtime, &api_profile);
+        CHECK(api_profile.calls[P8P_API_INPUT] > 0);
+        CHECK(api_profile.calls[P8P_API_SPRITE] == 0);
+        CHECK(api_profile.calls[P8P_API_GRAPHICS] == 0);
+        CHECK(api_profile.calls[P8P_API_MEMORY] == 0);
+        CHECK(api_profile.calls[P8P_API_DRAW_STATE] == 0);
+        CHECK(api_profile.calls[P8P_API_TEXT] == 0);
+        p8p_runtime_set_profile_hook(runtime, NULL, NULL);
         framebuffer = p8p_runtime_framebuffer(runtime);
         CHECK(framebuffer != NULL);
         CHECK(framebuffer[3 * 128 + 1] == 8);
@@ -395,6 +430,7 @@ int main(void) {
         } else {
             puts("Celeste acceptance test skipped (local cart not present)");
         }
+
         p8p_runtime_destroy(runtime);
     }
     p8p_cart_destroy(&cart);

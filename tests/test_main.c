@@ -1,6 +1,7 @@
 #include "p8p/cart.h"
 #include "p8p/display.h"
 #include "p8p/platform.h"
+#include "p8p/scheduler.h"
 #include "p8p/system_input.h"
 
 #include <stdint.h>
@@ -154,6 +155,19 @@ static void test_system_input(void) {
           P8P_SYSTEM_INPUT_NONE);
 }
 
+static void test_render_scheduler(void) {
+    /* Crossgun: already comfortably below the 60 Hz budget. */
+    CHECK(p8p_render_divisor_for_load(60, 6000, 1000, 1000, 3000) == 1);
+    /* Scramble: a second render slot preserves logical speed. */
+    CHECK(p8p_render_divisor_for_load(60, 14000, 6000, 2000, 3000) == 2);
+    /* BAS: _update dominates, so R4 would ruin visuals for little gain. */
+    CHECK(p8p_render_divisor_for_load(60, 29000, 25000, 3000, 3000) == 1);
+    /* UFO: rendering dominates and skipping it materially improves speed. */
+    CHECK(p8p_render_divisor_for_load(60, 58000, 17000, 1000, 3000) == 4);
+    /* 30 Hz carts may skip at most every other draw. */
+    CHECK(p8p_render_divisor_for_load(30, 45000, 15000, 5000, 3000) == 2);
+}
+
 int main(void) {
     test_text_cart();
     test_text_cart_with_bom();
@@ -162,6 +176,7 @@ int main(void) {
     test_integer_scaling();
     test_sharp_bilinear_scaling();
     test_system_input();
+    test_render_scheduler();
 
     if (failures) {
         fprintf(stderr, "%d test(s) failed\n", failures);

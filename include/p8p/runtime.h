@@ -12,6 +12,27 @@ extern "C" {
 
 typedef struct p8p_runtime p8p_runtime_t;
 typedef void (*p8p_runtime_service_fn)(void *userdata);
+typedef enum p8p_runtime_profile_event {
+    P8P_PROFILE_UPDATE_BEGIN,
+    P8P_PROFILE_UPDATE_END,
+    P8P_PROFILE_DRAW_BEGIN,
+    P8P_PROFILE_DRAW_END
+} p8p_runtime_profile_event_t;
+typedef void (*p8p_runtime_profile_fn)(
+    void *userdata, p8p_runtime_profile_event_t event);
+typedef enum p8p_runtime_api_category {
+    P8P_API_SPRITE,
+    P8P_API_GRAPHICS,
+    P8P_API_MEMORY,
+    P8P_API_DRAW_STATE,
+    P8P_API_TEXT,
+    P8P_API_INPUT,
+    P8P_API_HELPER,
+    P8P_API_CATEGORY_COUNT
+} p8p_runtime_api_category_t;
+typedef struct p8p_runtime_api_profile {
+    uint32_t calls[P8P_API_CATEGORY_COUNT];
+} p8p_runtime_api_profile_t;
 typedef int (*p8p_runtime_cartdata_load_fn)(void *userdata, const char *id,
                                             uint8_t *data, size_t size);
 typedef int (*p8p_runtime_cartdata_save_fn)(void *userdata, const char *id,
@@ -27,6 +48,11 @@ void p8p_runtime_set_live_buttons(p8p_runtime_t *runtime, uint8_t buttons);
 void p8p_runtime_set_service_hook(p8p_runtime_t *runtime,
                                   p8p_runtime_service_fn callback,
                                   void *userdata);
+void p8p_runtime_set_profile_hook(p8p_runtime_t *runtime,
+                                  p8p_runtime_profile_fn callback,
+                                  void *userdata);
+void p8p_runtime_get_api_profile(const p8p_runtime_t *runtime,
+                                 p8p_runtime_api_profile_t *profile);
 void p8p_runtime_set_cartdata_hooks(p8p_runtime_t *runtime,
                                     p8p_runtime_cartdata_load_fn load,
                                     p8p_runtime_cartdata_save_fn save,

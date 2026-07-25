@@ -348,14 +348,12 @@ static void draw_controls(p8p_menu_t *menu) {
 static void draw_display(p8p_menu_t *menu) {
     char row[32];
     const char *scale = menu->settings->scale == 0 ? "AUTO" :
-                        menu->settings->scale == 1 ? "1X" :
-                        menu->settings->scale == 2 ? "2X" : "FULL SOFT";
+                        menu->settings->scale == 1 ? "1X" : "2X";
     menu_base(menu, tr(menu, "DISPLAY", "ЭКРАН"));
     snprintf(row, sizeof(row), "%s: %s", tr(menu, "SCALE", "МАСШТАБ"), scale);
     selected_row(menu, 0, 18, row, 1);
     selected_row(menu, 1, 28, tr(menu, "BACK", "НАЗАД"), 1);
-    text(menu->framebuffer, 4, 44, menu->settings->scale == 3 ?
-         tr(menu, "SHARP BILINEAR", "МЯГКИЙ 1440X") :
+    text(menu->framebuffer, 4, 44,
          tr(menu, "PIXEL PERFECT", "ПИКСЕЛЬ В ПИКСЕЛЬ"), 6);
 }
 
@@ -642,10 +640,10 @@ static void update_display(p8p_menu_t *menu, uint16_t pressed) {
     if (menu->cursor == 0 &&
         (pressed & (P8P_PHYS_A | P8P_PHYS_LEFT | P8P_PHYS_RIGHT))) {
         if (pressed & P8P_PHYS_LEFT)
-            menu->settings->scale = menu->settings->scale == 0 ? 3 :
+            menu->settings->scale = menu->settings->scale == 0 ? 2 :
                                     menu->settings->scale - 1;
         else
-            menu->settings->scale = (menu->settings->scale + 1) % 4;
+            menu->settings->scale = (menu->settings->scale + 1) % 3;
         save_settings(menu);
     }
 }

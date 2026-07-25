@@ -11,6 +11,7 @@ app_pc
 # Locally supplied cartridges are never part of the public source tree.
 /Доп игры/
 /Топ игры/
+/Ошибки квартуса/
 /assets/cards/*.p8
 /assets/cards/*.p8.png
 /assets/cards/*.zip

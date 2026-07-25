@@ -64,12 +64,10 @@ true 128×128 scanout timing in the openfpgaOS gateware/runtime. That remains a
 separate hardware task; the emulator now prefers a complete 10× image over a
 cropped nominal 11× image.
 
-As an optional size-first alternative, `FULL SOFT` retains the same 320×288
-scanout and switches only its color surface to RGB565. A sharp-bilinear pass
-first treats each PICO-8 pixel as a crisp 2×2 block, then filters 256×256 to
-288×288. APF's existing 5× presentation produces a 1440×1440 square. This path
-is deliberately opt-in; `2X` remains the default so the established indexed,
-pixel-perfect renderer and its lower CPU cost are unchanged.
+An experimental sharp-bilinear full-screen mode was tested on real hardware and
+removed because its 288×288 intermediate image was visibly blurry. `2X` is now
+the only enlarged mode. A future full-screen option should use a true 128×128
+scanout and Pocket's native 11× presentation instead of software filtering.
 
 ## Input
 
